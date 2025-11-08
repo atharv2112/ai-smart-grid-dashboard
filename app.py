@@ -1,7 +1,7 @@
-# AI Smart Grid Optimization - Interactive Dashboard (Dark Mode Graph)
+# AI Smart Grid Optimization - Interactive Dashboard with Login (Dark Mode Graph)
 # Author: Atharv Jadhav
 
-from flask import Flask, render_template_string, request
+from flask import Flask, render_template_string, request, redirect, url_for, session
 import numpy as np
 import pandas as pd
 import matplotlib
@@ -12,13 +12,33 @@ import base64
 from io import BytesIO
 
 app = Flask(__name__)
+app.secret_key = "smartgrid_secret_key"
 
-@app.route('/')
+# ---------------- LOGIN PAGE ----------------
+@app.route("/", methods=["GET", "POST"])
+def login():
+    if request.method == "POST":
+        username = request.form["username"].strip().lower()
+        password = request.form["password"].strip()
+
+        if username == "atharv jadhav" and password == "atharv2112":
+            session["logged_in"] = True
+            return redirect(url_for("dashboard"))
+        else:
+            return render_template_string(login_html, error="Invalid username or password!")
+
+    return render_template_string(login_html)
+
+# ---------------- DASHBOARD PAGE ----------------
+@app.route("/dashboard")
 def dashboard():
+    if not session.get("logged_in"):
+        return redirect(url_for("login"))
+
     graph_type = request.args.get('graph', 'line')
     selected_day = int(request.args.get('day', 0))
 
-    # --- Generate 8 days of data ---
+    # --- Generate sample data ---
     np.random.seed(42)
     total_days = 8
     hours_per_day = 24
@@ -52,33 +72,30 @@ def dashboard():
         battery_levels.append(battery_charge)
     df["battery_level"] = battery_levels
 
-    # --- Stability ---
+    # --- Stability Check ---
     df["grid_stability"] = df.apply(
         lambda x: "Stable" if abs(x["actual_supply"] - x["demand"]) < 10 else "Unstable",
         axis=1
     )
 
-    # --- Date Splitting ---
     df["date"] = df["time"].dt.strftime("%Y-%m-%d")
-
-    # ✅ Changed to 12-hour format (e.g., 03:00 PM instead of 15:00)
     df["time_only"] = df["time"].dt.strftime("%I:%M %p")
 
     unique_days = sorted(df["date"].unique())
     selected_date = unique_days[selected_day] if selected_day < len(unique_days) else unique_days[-1]
     day_df = df[df["date"] == selected_date]
 
-    # --- Dark Background Graph ---
+    # --- Dark Graph ---
     plt.style.use("dark_background")
     fig, ax = plt.subplots(figsize=(10, 5))
     ax.set_facecolor("#1e272e")
 
     if graph_type == "bar":
         x = np.arange(len(day_df))
-        ax.bar(x - 0.3, day_df["solar"], width=0.2, label="Solar", color="#fbc531", alpha=0.8)
-        ax.bar(x - 0.1, day_df["wind"], width=0.2, label="Wind", color="#00a8ff", alpha=0.8)
-        ax.bar(x + 0.3, day_df["demand"], width=0.2, label="Demand", color="#e84118", alpha=0.8)
-        ax.bar(x + 0.1, day_df["battery_level"], width=0.2, label="Battery", color="#e1b12c", alpha=0.8)
+        ax.bar(x - 0.3, day_df["solar"], width=0.2, label="Solar", color="#fbc531")
+        ax.bar(x - 0.1, day_df["wind"], width=0.2, label="Wind", color="#00a8ff")
+        ax.bar(x + 0.3, day_df["demand"], width=0.2, label="Demand", color="#e84118")
+        ax.bar(x + 0.1, day_df["battery_level"], width=0.2, label="Battery", color="#e1b12c")
         plt.xticks(x[::3], day_df["time_only"].iloc[::3], rotation=45, color="white")
     elif graph_type == "scatter":
         ax.scatter(day_df["time_only"], day_df["solar"], label="Solar", c="#fbc531")
@@ -104,132 +121,186 @@ def dashboard():
     graph_url = base64.b64encode(buf.getvalue()).decode('utf-8')
     plt.close()
 
-    # --- HTML Layout ---
-    html = f"""
-    <html>
-    <head>
-        <title>AI Smart Grid Dashboard</title>
-        <style>
-            body {{
-                font-family: Arial;
-                background: #1e272e;
-                color: white;
-                margin: 0;
-                padding: 20px;
-            }}
-            h1 {{
-                color: #00a8ff;
-                text-align: center;
-            }}
-            .container {{
-                width: 95%;
-                margin: auto;
-                background: #2f3640;
-                padding: 20px;
-                border-radius: 12px;
-                box-shadow: 0 0 10px #718093;
-            }}
-            form {{
-                text-align: center;
-                margin-bottom: 20px;
-            }}
-            select, button {{
-                padding: 10px;
-                border-radius: 8px;
-                border: 1px solid #718093;
-                margin: 5px;
-                font-size: 15px;
-                background-color: #353b48;
-                color: white;
-            }}
-            button {{
-                background-color: #00a8ff;
-                color: white;
-                cursor: pointer;
-            }}
-            button:hover {{
-                background-color: #0097e6;
-            }}
-            table {{
-                border-collapse: collapse;
-                width: 100%;
-                margin-top: 20px;
-            }}
-            th, td {{
-                border: 1px solid #718093;
-                padding: 8px;
-                text-align: center;
-            }}
-            th {{
-                background-color: #273c75;
-                color: white;
-            }}
-            .stable-cell {{
-                background-color: #44bd32;
-                color: white;
-                font-weight: bold;
-            }}
-            .unstable-cell {{
-                background-color: #e84118;
-                color: white;
-                font-weight: bold;
-            }}
-        </style>
-    </head>
-    <body>
-        <div class="container">
-            <h1>⚡ AI Smart Grid Optimization Dashboard</h1>
-            <form method="get" action="/">
-                <label for="day">Select Day:</label>
-                <select name="day" id="day">
-    """
+    # --- Render Dashboard ---
+    return render_template_string(
+        dashboard_html,
+        graph_url=graph_url,
+        unique_days=list(enumerate(unique_days)),  # ✅ pass enumerate safely
+        selected_day=selected_day,
+        selected_date=selected_date,
+        graph_type=graph_type,
+        day_df=day_df
+    )
 
-    for i, d in enumerate(unique_days):
-        html += f'<option value="{i}" {"selected" if i==selected_day else ""}>{d}</option>'
+# ---------------- LOGOUT ----------------
+@app.route("/logout")
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
 
-    html += f"""
-                </select>
-                <label for="graph">Graph Type:</label>
-                <select name="graph" id="graph">
-                    <option value="line" {"selected" if graph_type=="line" else ""}>Line Plot</option>
-                    <option value="bar" {"selected" if graph_type=="bar" else ""}>Bar Plot</option>
-                    <option value="scatter" {"selected" if graph_type=="scatter" else ""}>Matplot (Scatter)</option>
-                </select>
-                <button type="submit">View Data</button>
-            </form>
+# ---------------- HTML Templates ----------------
+login_html = """
+<!DOCTYPE html>
+<html>
+<head>
+<title>Login - Smart Grid Dashboard</title>
+<style>
+body {
+    background-color: #1e272e;
+    color: white;
+    font-family: Arial;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    height: 100vh;
+}
+.login-box {
+    background: #2f3640;
+    padding: 30px;
+    border-radius: 10px;
+    text-align: center;
+    box-shadow: 0 0 10px #718093;
+}
+input {
+    width: 90%;
+    padding: 10px;
+    margin: 8px 0;
+    border: none;
+    border-radius: 6px;
+    background: #353b48;
+    color: white;
+}
+button {
+    background-color: #00a8ff;
+    color: white;
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+}
+button:hover { background-color: #0097e6; }
+.error { color: #e84118; }
+</style>
+</head>
+<body>
+    <div class="login-box">
+        <h2>🔒 Login to Smart Grid Dashboard</h2>
+        <form method="POST">
+            <input type="text" name="username" placeholder="Username" required><br>
+            <input type="password" name="password" placeholder="Password" required><br>
+            <button type="submit">Login</button>
+        </form>
+        {% if error %}<p class="error">{{ error }}</p>{% endif %}
+    </div>
+</body>
+</html>
+"""
 
-            <img src="data:image/png;base64,{graph_url}" width="100%" />
+dashboard_html = """
+<html>
+<head>
+    <title>AI Smart Grid Dashboard</title>
+    <style>
+        body {
+            font-family: Arial;
+            background: #1e272e;
+            color: white;
+            margin: 0;
+            padding: 20px;
+        }
+        h1 { color: #00a8ff; text-align: center; }
+        .container {
+            width: 95%;
+            margin: auto;
+            background: #2f3640;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 0 10px #718093;
+        }
+        a.logout {
+            float: right;
+            background: #e84118;
+            color: white;
+            padding: 8px 15px;
+            border-radius: 6px;
+            text-decoration: none;
+        }
+        select, button {
+            padding: 10px;
+            border-radius: 8px;
+            border: 1px solid #718093;
+            margin: 5px;
+            font-size: 15px;
+            background-color: #353b48;
+            color: white;
+        }
+        button { background-color: #00a8ff; cursor: pointer; }
+        button:hover { background-color: #0097e6; }
+        table {
+            border-collapse: collapse;
+            width: 100%;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #718093;
+            padding: 8px;
+            text-align: center;
+        }
+        th { background-color: #273c75; }
+        .stable-cell { background-color: #44bd32; color: white; font-weight: bold; }
+        .unstable-cell { background-color: #e84118; color: white; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <a class="logout" href="/logout">Logout</a>
+        <h1>⚡ AI Smart Grid Optimization Dashboard</h1>
+        <form method="get" action="/dashboard">
+            <label for="day">Select Day:</label>
+            <select name="day" id="day">
+                {% for i, d in unique_days %}
+                    <option value="{{i}}" {% if i == selected_day %}selected{% endif %}>{{d}}</option>
+                {% endfor %}
+            </select>
+            <label for="graph">Graph Type:</label>
+            <select name="graph" id="graph">
+                <option value="line" {% if graph_type=='line' %}selected{% endif %}>Line Plot</option>
+                <option value="bar" {% if graph_type=='bar' %}selected{% endif %}>Bar Plot</option>
+                <option value="scatter" {% if graph_type=='scatter' %}selected{% endif %}>Matplot (Scatter)</option>
+            </select>
+            <button type="submit">View Data</button>
+        </form>
 
-            <h2 style="text-align:center;">Grid Data - {selected_date}</h2>
-            <table>
-                <tr>
-                    <th>Time</th>
-                    <th>Solar (%)</th>
-                    <th>Wind (%)</th>
-                    <th>Actual Supply (%)</th>
-                    <th>Demand (%)</th>
-                    <th>Battery (%)</th>
-                    <th>Stability</th>
-                </tr>
-    """
+        <img src="data:image/png;base64,{{graph_url}}" width="100%" />
 
-    for _, row in day_df.iterrows():
-        css_class = "stable-cell" if row["grid_stability"] == "Stable" else "unstable-cell"
-        html += f"""
-        <tr>
-            <td>{row['time_only']}</td>
-            <td>{row['solar']:.2f}%</td>
-            <td>{row['wind']:.2f}%</td>
-            <td>{row['actual_supply']:.2f}%</td>
-            <td>{row['demand']:.2f}%</td>
-            <td>{row['battery_level']:.2f}%</td>
-            <td class="{css_class}">{row['grid_stability']}</td>
-        </tr>
-        """
-
-    html += "</table></div></body></html>"
-    return render_template_string(html)
-
+        <h2 style="text-align:center;">Grid Data - {{selected_date}}</h2>
+        <table>
+            <tr>
+                <th>Time</th>
+                <th>Solar (%)</th>
+                <th>Wind (%)</th>
+                <th>Actual Supply (%)</th>
+                <th>Demand (%)</th>
+                <th>Battery (%)</th>
+                <th>Stability</th>
+            </tr>
+            {% for _, row in day_df.iterrows() %}
+            <tr>
+                <td>{{row.time_only}}</td>
+                <td>{{"%.2f"|format(row.solar)}}%</td>
+                <td>{{"%.2f"|format(row.wind)}}%</td>
+                <td>{{"%.2f"|format(row.actual_supply)}}%</td>
+                <td>{{"%.2f"|format(row.demand)}}%</td>
+                <td>{{"%.2f"|format(row.battery_level)}}%</td>
+                <td class="{{'stable-cell' if row.grid_stability=='Stable' else 'unstable-cell'}}">{{row.grid_stability}}</td>
+            </tr>
+            {% endfor %}
+        </table>
+    </div>
+</body>
+</html>
+"""
 
 if __name__ == "__main__":
     app.run(debug=True)
+
